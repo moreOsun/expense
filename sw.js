@@ -1,7 +1,7 @@
 /* ================= Service Worker - 日常记账 离线缓存 ================= */
 /* 版本更新流程：改动页面后，同步递增下方 CACHE 版本号，并更新 index.html 里的
    <meta name="app-version">，用户下次联网打开即自动拿到新版 */
-var CACHE = 'expense-tracker-v1.2.1';
+var CACHE = 'expense-tracker-v1.2.2';
 var ASSETS = [
   './',
   './index.html',
