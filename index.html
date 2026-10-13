@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#4CAF50">
     <meta name="description" content="简洁实用的日常记账应用，离线可用">
-    <meta name="app-version" content="1.2.3">
+    <meta name="app-version" content="1.2.4">
     <link rel="manifest" href="./manifest.json">
     <link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png">
@@ -359,6 +359,34 @@
         .pi-textarea:focus {
             outline: none;
             border-color: var(--primary-color);
+        }
+
+        /* 导出方式选择弹窗（em- 前缀） */
+        .em-opt {
+            display: block;
+            width: calc(100% - 40px);
+            margin: 0 20px 10px;
+            padding: 13px 14px;
+            text-align: left;
+            font-size: 15px;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            background-color: #fafafa;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .em-opt:active {
+            background-color: #eef3ee;
+            border-color: var(--primary-color);
+        }
+
+        .em-hint {
+            margin: 4px 20px 16px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.6;
         }
 
         /* 标签内容 */
@@ -1945,6 +1973,21 @@
         </div>
     </div>
 
+    <!-- 导出方式选择弹窗（MIUI 等老内核会静默吞掉 blob 下载，提供分享/复制兜底） -->
+    <div class="modal" id="exportModal">
+        <div class="modal-content" style="max-width: 360px;">
+            <div class="modal-header">
+                <h3>💾 导出数据</h3>
+                <button class="modal-close" onclick="app.closeExportModal()">&times;</button>
+            </div>
+            <p class="ic-text" id="emSummary">选择导出方式：</p>
+            <button type="button" class="em-opt" id="emDownload">📥 下载 JSON 文件</button>
+            <button type="button" class="em-opt" id="emShare" style="display: none;">📤 分享（存到文件 / 发给微信）</button>
+            <button type="button" class="em-opt" id="emCopy">📋 复制到剪贴板</button>
+            <p class="em-hint">若“下载”后在下载/文件里找不到，请改用“分享”或“复制”；复制内容可存进备忘录，之后用“📋 粘贴”导入恢复。</p>
+        </div>
+    </div>
+
     <script>
         // IndexedDB 数据存储管理
         class StorageManager {
@@ -2140,8 +2183,8 @@
                 });
             }
 
-            // 导出数据到 JSON 文件（完整备份：记录 + 自定义栏目）
-            async exportToFile() {
+            // 生成完整备份文本（记录 + 自定义栏目）
+            async buildBackup() {
                 const records = await this.getRecords();
                 if (records.length === 0) {
                     throw new Error('暂无数据可导出');
@@ -2156,11 +2199,18 @@
                         income: parseCats('income_categories')
                     }
                 };
-                const dataStr = JSON.stringify(payload, null, 2);
-                const dataBlob = new Blob([dataStr], { type: 'application/json' });
+                return {
+                    text: JSON.stringify(payload, null, 2),
+                    fileName: `expense_backup_${new Date().toISOString().split('T')[0]}.json`,
+                    count: records.length
+                };
+            }
+            
+            // 发起浏览器下载（部分老 WebView 会静默忽略，仅供能用时的快捷通道）
+            downloadText(text, fileName) {
+                const dataBlob = new Blob([text], { type: 'application/json' });
                 const url = URL.createObjectURL(dataBlob);
-                const fileName = `expense_backup_${new Date().toISOString().split('T')[0]}.json`;
-
+            
                 if ('download' in document.createElement('a')) {
                     // 兼容旧 WebView：a 元素必须挂入 DOM，且下载发起后才能回收 blob URL
                     const link = document.createElement('a');
@@ -2174,11 +2224,10 @@
                         URL.revokeObjectURL(url);
                     }, 5000);
                 } else {
-                    // 老 iOS Safari 等不支持 download 属性：新窗口打开兼差保存
+                    // 老 iOS Safari 等不支持 download 属性：新窗口打开兜底保存
                     window.open(url, '_blank');
                     setTimeout(() => URL.revokeObjectURL(url), 60000);
                 }
-                return records.length;
             }
 
             // 导入用：规范化单条记录（保留原 id/timestamp，缺失才补）
@@ -2403,6 +2452,14 @@
                 });
                 document.getElementById('pasteImportModal').addEventListener('click', (e) => {
                     if (e.target.id === 'pasteImportModal') this.closePasteImport();
+                });
+
+                // 导出方式选择弹窗（下载/分享/复制）
+                document.getElementById('emDownload').addEventListener('click', () => this.doExportDownload());
+                document.getElementById('emShare').addEventListener('click', () => this.doExportShare());
+                document.getElementById('emCopy').addEventListener('click', () => this.doExportCopy());
+                document.getElementById('exportModal').addEventListener('click', (e) => {
+                    if (e.target.id === 'exportModal') this.closeExportModal();
                 });
 
                 // 自绘日历选择器
@@ -3172,13 +3229,85 @@
                 }, 2000);
             }
 
-            // 导出数据
+            // 导出数据：MIUI 等老内核会静默吞掉 blob 下载，改为三通道选择（下载/分享/复制）
             async exportData() {
                 try {
-                    const count = await this.storage.exportToFile();
-                    this.showToast(`已导出 ${count} 条记录，请在“下载”中查看`);
+                    const backup = await this.storage.buildBackup();
+                    this.pendingBackup = backup;
+                    document.getElementById('emSummary').textContent = `共 ${backup.count} 条记录，选择导出方式：`;
+                    const shareBtn = document.getElementById('emShare');
+                    shareBtn.style.display = (typeof navigator.share === 'function') ? 'block' : 'none';
+                    document.getElementById('exportModal').classList.add('show');
                 } catch (error) {
                     this.showToast('导出失败：' + error.message);
+                }
+            }
+
+            closeExportModal() {
+                document.getElementById('exportModal').classList.remove('show');
+                this.pendingBackup = null;
+            }
+
+            doExportDownload() {
+                const b = this.pendingBackup;
+                if (!b) return;
+                this.storage.downloadText(b.text, b.fileName);
+                this.showToast('已发起下载，若“下载/文件”里找不到请改用“分享”或“复制”');
+                this.closeExportModal();
+            }
+
+            async doExportShare() {
+                const b = this.pendingBackup;
+                if (!b) return;
+                try {
+                    // 优先带文件分享（可存文件/发微信），不支持时退回纯文本分享
+                    const file = new File([b.text], b.fileName, { type: 'application/json' });
+                    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                        await navigator.share({ files: [file], title: b.fileName });
+                    } else {
+                        await navigator.share({ title: b.fileName, text: b.text });
+                    }
+                    this.closeExportModal();
+                } catch (error) {
+                    if (error && error.name === 'AbortError') return;
+                    this.showToast('分享失败：' + ((error && error.message) || '已取消'));
+                }
+            }
+
+            async doExportCopy() {
+                const b = this.pendingBackup;
+                if (!b) return;
+                const ok = await this.copyTextToClipboard(b.text);
+                if (ok) {
+                    this.showToast('已复制，可存进备忘录/微信，之后用“📋 粘贴”导入');
+                    this.closeExportModal();
+                } else {
+                    this.showToast('复制失败，请改用“分享”或“下载”');
+                }
+            }
+
+            // 兼容老 WebView 的复制：优先异步 Clipboard API，失败退回 execCommand
+            async copyTextToClipboard(text) {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    try {
+                        await navigator.clipboard.writeText(text);
+                        return true;
+                    } catch (e) { /* 继续兜底 */ }
+                }
+                try {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.setAttribute('readonly', '');
+                    ta.style.position = 'fixed';
+                    ta.style.top = '-9999px';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    ta.setSelectionRange(0, text.length);
+                    const ok = document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    return ok;
+                } catch (e) {
+                    return false;
                 }
             }
 
