@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#4CAF50">
     <meta name="description" content="简洁实用的日常记账应用，离线可用">
-    <meta name="app-version" content="1.2.0">
+    <meta name="app-version" content="1.2.1">
     <link rel="manifest" href="./manifest.json">
     <link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png">
@@ -1593,7 +1593,7 @@
                 <div class="filter-actions">
                     <button id="exportData" class="btn-export" title="导出数据">💾 导出</button>
                     <button id="importData" class="btn-import" title="导入数据">📂 导入</button>
-                    <input type="file" id="importFile" accept=".json" style="display: none;">
+                    <input type="file" id="importFile" accept=".json,application/json,text/plain" style="position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none;">
                     <button id="clearAll" class="btn-clear">清空所有</button>
                 </div>
             </div>
@@ -2019,42 +2019,105 @@
                 });
             }
 
-            // 导出数据到 JSON 文件
+            // 导出数据到 JSON 文件（完整备份：记录 + 自定义栏目）
             async exportToFile() {
                 const records = await this.getRecords();
-                const dataStr = JSON.stringify(records, null, 2);
+                if (records.length === 0) {
+                    throw new Error('暂无数据可导出');
+                }
+                const parseCats = key => { try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) { return null; } };
+                const payload = {
+                    app: 'daily-expense-tracker',
+                    exportedAt: new Date().toISOString(),
+                    records: records,
+                    categories: {
+                        expense: parseCats('expense_categories'),
+                        income: parseCats('income_categories')
+                    }
+                };
+                const dataStr = JSON.stringify(payload, null, 2);
                 const dataBlob = new Blob([dataStr], { type: 'application/json' });
                 const url = URL.createObjectURL(dataBlob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `expense_backup_${new Date().toISOString().split('T')[0]}.json`;
-                link.click();
-                URL.revokeObjectURL(url);
+                const fileName = `expense_backup_${new Date().toISOString().split('T')[0]}.json`;
+
+                if ('download' in document.createElement('a')) {
+                    // 兼容旧 WebView：a 元素必须挂入 DOM，且下载发起后才能回收 blob URL
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = fileName;
+                    link.style.display = 'none';
+                    document.body.appendChild(link);
+                    link.click();
+                    setTimeout(() => {
+                        document.body.removeChild(link);
+                        URL.revokeObjectURL(url);
+                    }, 5000);
+                } else {
+                    // 老 iOS Safari 等不支持 download 属性：新窗口打开兼差保存
+                    window.open(url, '_blank');
+                    setTimeout(() => URL.revokeObjectURL(url), 60000);
+                }
+                return records.length;
             }
 
-            // 从 JSON 文件导入数据
+            // 导入用：规范化单条记录（保留原 id/timestamp，缺失才补）
+            normalizeImported(r) {
+                const rec = {
+                    type: r.type === 'income' ? 'income' : 'expense',
+                    amount: Math.abs(parseFloat(r.amount)) || 0,
+                    category: String(r.category || '其他'),
+                    note: String(r.note || ''),
+                    date: /^\d{4}-\d{2}-\d{2}$/.test(r.date || '') ? r.date : new Date().toISOString().split('T')[0]
+                };
+                rec.id = r.id ? String(r.id) : (Date.now().toString() + Math.random().toString(36).substr(2, 9));
+                rec.timestamp = parseInt(r.timestamp, 10) || new Date(rec.date + 'T00:00:00').getTime();
+                return rec;
+            }
+
+            // 批量写入（单事务，保留备份原始顺序字段）
+            async importRecords(records) {
+                await this.clearAll();
+                if (this.useFallback || !this.db) {
+                    this.saveRecordsToLocalStorage(records.map(r => this.normalizeImported(r)));
+                    return records.length;
+                }
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction([this.STORE_NAME], 'readwrite');
+                    const objectStore = transaction.objectStore(this.STORE_NAME);
+                    records.forEach(r => objectStore.put(this.normalizeImported(r)));
+                    transaction.oncomplete = () => resolve(records.length);
+                    transaction.onerror = () => reject(new Error('写入数据失败'));
+                    transaction.onabort = () => reject(new Error('写入数据失败'));
+                });
+            }
+
+            // 从 JSON 文件导入数据（兼容旧版纯数组与新版完整备份两种格式）
             async importFromFile(file) {
                 return new Promise((resolve, reject) => {
                     const reader = new FileReader();
                     reader.onload = async (e) => {
                         try {
-                            const records = JSON.parse(e.target.result);
-                            
-                            // 清空现有数据
-                            await this.clearAll();
-                            
-                            // 导入新数据
-                            for (const record of records) {
-                                await this.addRecord(record);
+                            const data = JSON.parse(e.target.result);
+                            const records = Array.isArray(data) ? data
+                                : (data && Array.isArray(data.records) ? data.records : null);
+                            if (!records) {
+                                reject(new Error('文件格式错误：不是本应用导出的备份'));
+                                return;
                             }
-                            
-                            resolve(records.length);
+                            const valid = records.filter(r => r && isFinite(parseFloat(r.amount)) && r.date);
+                            if (valid.length === 0) {
+                                reject(new Error('备份中没有有效记录'));
+                                return;
+                            }
+                            const count = await this.importRecords(valid);
+                            const cats = (!Array.isArray(data) && data.categories) ? data.categories : null;
+                            resolve({ count: count, skipped: records.length - valid.length, categories: cats });
                         } catch (error) {
                             reject(new Error('文件格式错误'));
                         }
                     };
                     reader.onerror = () => reject(new Error('读取文件失败'));
-                    reader.readAsText(file);
+                    reader.readAsText(file, 'utf-8');
                 });
             }
         }
@@ -2969,26 +3032,43 @@
             // 导出数据
             async exportData() {
                 try {
-                    await this.storage.exportToFile();
-                    this.showToast('数据导出成功');
+                    const count = await this.storage.exportToFile();
+                    this.showToast(`已导出 ${count} 条记录，请在“下载”中查看`);
                 } catch (error) {
                     this.showToast('导出失败：' + error.message);
                 }
             }
 
-            // 导入数据
+            // 导入数据（覆盖式恢复，含自定义栏目）
             async importData(file) {
                 if (!file) return;
 
+                if (!confirm('导入会覆盖当前全部记录和栏目，确定继续吗？')) {
+                    document.getElementById('importFile').value = '';
+                    return;
+                }
+
                 try {
-                    const count = await this.storage.importFromFile(file);
+                    const res = await this.storage.importFromFile(file);
+                    if (res.categories) {
+                        if (Array.isArray(res.categories.expense) && res.categories.expense.length > 0) {
+                            this.categories.expense = res.categories.expense;
+                            this.saveCategories('expense');
+                        }
+                        if (Array.isArray(res.categories.income) && res.categories.income.length > 0) {
+                            this.categories.income = res.categories.income;
+                            this.saveCategories('income');
+                        }
+                        this.updateCategoryOptions();
+                    }
                     await this.updateSummary();
                     await this.renderRecords();
-                    this.showToast(`成功导入 ${count} 条记录`);
-                    // 清空文件输入
-                    document.getElementById('importFile').value = '';
+                    let msg = `成功导入 ${res.count} 条记录`;
+                    if (res.skipped > 0) msg += `（跳过 ${res.skipped} 条无效）`;
+                    this.showToast(msg);
                 } catch (error) {
                     this.showToast('导入失败：' + error.message);
+                } finally {
                     document.getElementById('importFile').value = '';
                 }
             }
