@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#4CAF50">
     <meta name="description" content="简洁实用的日常记账应用，离线可用">
-    <meta name="app-version" content="1.2.1">
+    <meta name="app-version" content="1.2.2">
     <link rel="manifest" href="./manifest.json">
     <link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png">
@@ -283,6 +283,58 @@
             cursor: pointer;
             background-color: #eef3ee;
             color: var(--primary-color);
+        }
+
+        /* 导入按钮：真实 file input 覆盖在按钮上直接接收点击（MIUI 等老 WebView 拦截 JS 间接 .click()） */
+        .import-wrap {
+            position: relative;
+            display: inline-block;
+        }
+
+        .import-wrap input[type="file"] {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            cursor: pointer;
+            z-index: 2;
+        }
+
+        /* 自绘导入确认弹窗（ic- 前缀） */
+        .ic-text {
+            margin: 15px 20px;
+            font-size: 15px;
+            color: var(--text-primary);
+        }
+
+        .ic-actions {
+            display: flex;
+            justify-content: flex-end;
+            padding: 0 20px 20px;
+        }
+
+        .ic-actions > * + * {
+            margin-left: 10px;
+        }
+
+        .ic-btn {
+            padding: 8px 18px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .ic-btn-cancel {
+            background-color: var(--bg-color);
+            color: var(--text-secondary);
+        }
+
+        .ic-btn-ok {
+            background-color: var(--primary-color);
+            color: #ffffff;
         }
 
         /* 标签内容 */
@@ -1592,8 +1644,10 @@
                 </select>
                 <div class="filter-actions">
                     <button id="exportData" class="btn-export" title="导出数据">💾 导出</button>
-                    <button id="importData" class="btn-import" title="导入数据">📂 导入</button>
-                    <input type="file" id="importFile" accept=".json,application/json,text/plain" style="position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none;">
+                    <span class="import-wrap">
+                        <button type="button" id="importData" class="btn-import" title="导入数据">📂 导入</button>
+                        <input type="file" id="importFile">
+                    </span>
                     <button id="clearAll" class="btn-clear">清空所有</button>
                 </div>
             </div>
@@ -1820,6 +1874,21 @@
             <div class="dp-grid" id="dpGrid"></div>
             <div class="dp-actions">
                 <button type="button" class="dp-btn" id="dpToday">回到今天</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 导入确认弹窗（替代原生 confirm，MIUI standalone 可能屏蔽原生对话框） -->
+    <div class="modal" id="importConfirmModal">
+        <div class="modal-content" style="max-width: 340px;">
+            <div class="modal-header">
+                <h3>确认导入</h3>
+                <button class="modal-close" onclick="app.cancelImportConfirm()">&times;</button>
+            </div>
+            <p class="ic-text">导入会覆盖当前全部记录和自定义栏目，确定继续吗？</p>
+            <div class="ic-actions">
+                <button type="button" class="ic-btn ic-btn-cancel" id="importCancelBtn">取消</button>
+                <button type="button" class="ic-btn ic-btn-ok" id="importOkBtn">确认导入</button>
             </div>
         </div>
     </div>
@@ -2253,13 +2322,20 @@
                     this.exportData();
                 });
 
-                // 导入数据
+                // 导入数据：覆盖式 file input 直接接收点击唤起系统选择器
+                document.getElementById('importFile').addEventListener('change', () => {
+                    this.handleImportFilePicked();
+                });
+
+                // 兜底：若个别内核未命中覆盖 input，点击按钮仍可主动唤起
                 document.getElementById('importData').addEventListener('click', () => {
                     document.getElementById('importFile').click();
                 });
 
-                document.getElementById('importFile').addEventListener('change', (e) => {
-                    this.importData(e.target.files[0]);
+                document.getElementById('importOkBtn').addEventListener('click', () => this.confirmImport());
+                document.getElementById('importCancelBtn').addEventListener('click', () => this.cancelImportConfirm());
+                document.getElementById('importConfirmModal').addEventListener('click', (e) => {
+                    if (e.target.id === 'importConfirmModal') this.cancelImportConfirm();
                 });
 
                 // 自绘日历选择器
@@ -3039,14 +3115,31 @@
                 }
             }
 
-            // 导入数据（覆盖式恢复，含自定义栏目）
+            // 选中文件后先弹自绘确认（MIUI 等老 WebView 的 PWA standalone 可能屏蔽原生 confirm）
+            handleImportFilePicked() {
+                const input = document.getElementById('importFile');
+                const file = input.files && input.files[0];
+                if (!file) return;
+                this.pendingImportFile = file;
+                document.getElementById('importConfirmModal').classList.add('show');
+            }
+
+            cancelImportConfirm() {
+                this.pendingImportFile = null;
+                document.getElementById('importFile').value = '';
+                document.getElementById('importConfirmModal').classList.remove('show');
+            }
+
+            confirmImport() {
+                document.getElementById('importConfirmModal').classList.remove('show');
+                const file = this.pendingImportFile;
+                this.pendingImportFile = null;
+                this.importData(file);
+            }
+
+            // 导入数据（覆盖式恢复，含自定义栏目；确认环节已在弹窗完成）
             async importData(file) {
                 if (!file) return;
-
-                if (!confirm('导入会覆盖当前全部记录和栏目，确定继续吗？')) {
-                    document.getElementById('importFile').value = '';
-                    return;
-                }
 
                 try {
                     const res = await this.storage.importFromFile(file);
