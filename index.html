@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#4CAF50">
     <meta name="description" content="简洁实用的日常记账应用，离线可用">
-    <meta name="app-version" content="1.2.2">
+    <meta name="app-version" content="1.2.3">
     <link rel="manifest" href="./manifest.json">
     <link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png">
@@ -288,7 +288,8 @@
         /* 导入按钮：真实 file input 覆盖在按钮上直接接收点击（MIUI 等老 WebView 拦截 JS 间接 .click()） */
         .import-wrap {
             position: relative;
-            display: inline-block;
+            display: inline-flex;
+            min-width: 0;
         }
 
         .import-wrap input[type="file"] {
@@ -300,6 +301,10 @@
             opacity: 0;
             cursor: pointer;
             z-index: 2;
+        }
+
+        .import-wrap .tool-btn {
+            width: 100%;
         }
 
         /* 自绘导入确认弹窗（ic- 前缀） */
@@ -335,6 +340,25 @@
         .ic-btn-ok {
             background-color: var(--primary-color);
             color: #ffffff;
+        }
+
+        .pi-textarea {
+            display: block;
+            width: calc(100% - 40px);
+            margin: 0 20px 12px;
+            padding: 10px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 13px;
+            font-family: Consolas, Menlo, monospace;
+            background-color: #fafafa;
+            color: var(--text-primary);
+            resize: vertical;
+        }
+
+        .pi-textarea:focus {
+            outline: none;
+            border-color: var(--primary-color);
         }
 
         /* 标签内容 */
@@ -439,8 +463,11 @@
 
         .filter-actions {
             display: flex;
-            gap: 8px;
             flex-wrap: wrap;
+        }
+
+        .filter-actions > * + * {
+            margin-left: 8px;
         }
 
         .filter-bar select {
@@ -450,47 +477,47 @@
             font-size: 14px;
         }
 
-        .btn-export,
-        .btn-import {
-            padding: 8px 12px;
-            background-color: var(--primary-color);
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
+        /* 工具栏按钮（淡色底 + 同色系文字，四键等宽成组） */
+        .tool-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 14px;
+            border-radius: 10px;
+            border: 1px solid transparent;
             font-size: 14px;
+            line-height: 1.4;
+            cursor: pointer;
             transition: all 0.2s;
         }
 
-        .btn-export:hover,
-        .btn-import:hover {
-            opacity: 0.9;
-            transform: translateY(-1px);
+        .tool-btn:active {
+            transform: scale(0.96);
+            filter: brightness(0.95);
         }
 
-        .btn-export:active,
-        .btn-import:active {
-            transform: translateY(0);
+        .tool-btn-export {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+            border-color: #c8e6c9;
         }
 
-        .btn-clear {
-            padding: 8px 16px;
-            background-color: var(--danger-color);
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: all 0.2s;
+        .tool-btn-import {
+            background-color: #e3f2fd;
+            color: #1565c0;
+            border-color: #bbdefb;
         }
 
-        .btn-clear:hover {
-            opacity: 0.9;
-            transform: translateY(-1px);
+        .tool-btn-paste {
+            background-color: #fff8e1;
+            color: #ef6c00;
+            border-color: #ffecb3;
         }
 
-        .btn-clear:active {
-            transform: translateY(0);
+        .tool-btn-danger {
+            background-color: #ffebee;
+            color: #c62828;
+            border-color: #ffcdd2;
         }
 
         /* 账单列表 */
@@ -1505,16 +1532,24 @@
 
             .filter-actions {
                 width: 100%;
-                justify-content: space-between;
             }
 
-            .btn-export,
-            .btn-import,
-            .btn-clear {
+            .filter-actions > * {
                 flex: 1;
-                padding: 8px 6px;
+                min-width: 0;
+            }
+
+            .filter-actions > * + * {
+                margin-left: 6px;
+            }
+
+            .tool-btn {
+                padding: 9px 4px;
                 font-size: 13px;
-                text-align: center;
+            }
+
+            .import-wrap .tool-btn {
+                width: 100%;
             }
 
             .modal-content {
@@ -1643,12 +1678,13 @@
                     <option value="income">收入</option>
                 </select>
                 <div class="filter-actions">
-                    <button id="exportData" class="btn-export" title="导出数据">💾 导出</button>
+                    <button type="button" id="exportData" class="tool-btn tool-btn-export" title="导出数据">💾 导出</button>
                     <span class="import-wrap">
-                        <button type="button" id="importData" class="btn-import" title="导入数据">📂 导入</button>
+                        <button type="button" id="importData" class="tool-btn tool-btn-import" title="导入数据">📂 导入</button>
                         <input type="file" id="importFile">
                     </span>
-                    <button id="clearAll" class="btn-clear">清空所有</button>
+                    <button type="button" id="pasteImport" class="tool-btn tool-btn-paste" title="粘贴备份内容导入">📋 粘贴</button>
+                    <button type="button" id="clearAll" class="tool-btn tool-btn-danger">🗑 清空</button>
                 </div>
             </div>
             <div id="recordList" class="record-list"></div>
@@ -1889,6 +1925,22 @@
             <div class="ic-actions">
                 <button type="button" class="ic-btn ic-btn-cancel" id="importCancelBtn">取消</button>
                 <button type="button" class="ic-btn ic-btn-ok" id="importOkBtn">确认导入</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 粘贴导入弹窗（MIUI 等老内核打不开文件选择器时的可用通道） -->
+    <div class="modal" id="pasteImportModal">
+        <div class="modal-content" style="max-width: 420px;">
+            <div class="modal-header">
+                <h3>📋 粘贴导入</h3>
+                <button class="modal-close" onclick="app.closePasteImport()">&times;</button>
+            </div>
+            <p class="ic-text">适用于点“📂 导入”无反应的老浏览器/WebView：用其他应用打开备份 JSON 文件，全选复制后粘贴到下方。导入会覆盖当前全部记录和自定义栏目。</p>
+            <textarea id="pasteImportText" class="pi-textarea" rows="6" placeholder="粘贴备份内容，形如：{ &quot;app&quot;: &quot;daily-expense-tracker&quot;, ... } 也支持旧版纯数组格式"></textarea>
+            <div class="ic-actions">
+                <button type="button" class="ic-btn ic-btn-cancel" onclick="app.closePasteImport()">取消</button>
+                <button type="button" class="ic-btn ic-btn-ok" id="pasteImportOkBtn">确认导入</button>
             </div>
         </div>
     </div>
@@ -2160,30 +2212,34 @@
                 });
             }
 
-            // 从 JSON 文件导入数据（兼容旧版纯数组与新版完整备份两种格式）
+            // 从 JSON 文本导入（兼容旧版纯数组与新版完整备份两种格式）
+            async importFromText(text) {
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (error) {
+                    throw new Error('文件格式错误');
+                }
+                const records = Array.isArray(data) ? data
+                    : (data && Array.isArray(data.records) ? data.records : null);
+                if (!records) {
+                    throw new Error('文件格式错误：不是本应用导出的备份');
+                }
+                const valid = records.filter(r => r && isFinite(parseFloat(r.amount)) && r.date);
+                if (valid.length === 0) {
+                    throw new Error('备份中没有有效记录');
+                }
+                const count = await this.importRecords(valid);
+                const cats = (!Array.isArray(data) && data.categories) ? data.categories : null;
+                return { count: count, skipped: records.length - valid.length, categories: cats };
+            }
+
+            // 从 JSON 文件导入数据（读文本后走统一解析链路）
             async importFromFile(file) {
                 return new Promise((resolve, reject) => {
                     const reader = new FileReader();
-                    reader.onload = async (e) => {
-                        try {
-                            const data = JSON.parse(e.target.result);
-                            const records = Array.isArray(data) ? data
-                                : (data && Array.isArray(data.records) ? data.records : null);
-                            if (!records) {
-                                reject(new Error('文件格式错误：不是本应用导出的备份'));
-                                return;
-                            }
-                            const valid = records.filter(r => r && isFinite(parseFloat(r.amount)) && r.date);
-                            if (valid.length === 0) {
-                                reject(new Error('备份中没有有效记录'));
-                                return;
-                            }
-                            const count = await this.importRecords(valid);
-                            const cats = (!Array.isArray(data) && data.categories) ? data.categories : null;
-                            resolve({ count: count, skipped: records.length - valid.length, categories: cats });
-                        } catch (error) {
-                            reject(new Error('文件格式错误'));
-                        }
+                    reader.onload = (e) => {
+                        this.importFromText(e.target.result).then(resolve).catch(reject);
                     };
                     reader.onerror = () => reject(new Error('读取文件失败'));
                     reader.readAsText(file, 'utf-8');
@@ -2336,6 +2392,17 @@
                 document.getElementById('importCancelBtn').addEventListener('click', () => this.cancelImportConfirm());
                 document.getElementById('importConfirmModal').addEventListener('click', (e) => {
                     if (e.target.id === 'importConfirmModal') this.cancelImportConfirm();
+                });
+
+                // 粘贴导入（不依赖文件选择器的可用通道）
+                document.getElementById('pasteImport').addEventListener('click', () => {
+                    this.openPasteImport();
+                });
+                document.getElementById('pasteImportOkBtn').addEventListener('click', () => {
+                    this.doPasteImport();
+                });
+                document.getElementById('pasteImportModal').addEventListener('click', (e) => {
+                    if (e.target.id === 'pasteImportModal') this.closePasteImport();
                 });
 
                 // 自绘日历选择器
@@ -3137,23 +3204,58 @@
                 this.importData(file);
             }
 
+            // 恢复备份中的自定义栏目
+            applyImportedCategories(res) {
+                if (!res.categories) return;
+                if (Array.isArray(res.categories.expense) && res.categories.expense.length > 0) {
+                    this.categories.expense = res.categories.expense;
+                    this.saveCategories('expense');
+                }
+                if (Array.isArray(res.categories.income) && res.categories.income.length > 0) {
+                    this.categories.income = res.categories.income;
+                    this.saveCategories('income');
+                }
+                this.updateCategoryOptions();
+            }
+
+            // 打开/关闭粘贴导入弹窗
+            openPasteImport() {
+                document.getElementById('pasteImportText').value = '';
+                document.getElementById('pasteImportModal').classList.add('show');
+            }
+
+            closePasteImport() {
+                document.getElementById('pasteImportModal').classList.remove('show');
+            }
+
+            // 执行粘贴导入（弹窗内已写明覆盖提醒，“确认导入”即二次确认）
+            async doPasteImport() {
+                const text = document.getElementById('pasteImportText').value.trim();
+                if (!text) {
+                    this.showToast('请先粘贴备份内容');
+                    return;
+                }
+                try {
+                    const res = await this.storage.importFromText(text);
+                    this.applyImportedCategories(res);
+                    await this.updateSummary();
+                    await this.renderRecords();
+                    let msg = `成功导入 ${res.count} 条记录`;
+                    if (res.skipped > 0) msg += `（跳过 ${res.skipped} 条无效）`;
+                    this.showToast(msg);
+                    this.closePasteImport();
+                } catch (error) {
+                    this.showToast('导入失败：' + error.message);
+                }
+            }
+
             // 导入数据（覆盖式恢复，含自定义栏目；确认环节已在弹窗完成）
             async importData(file) {
                 if (!file) return;
 
                 try {
                     const res = await this.storage.importFromFile(file);
-                    if (res.categories) {
-                        if (Array.isArray(res.categories.expense) && res.categories.expense.length > 0) {
-                            this.categories.expense = res.categories.expense;
-                            this.saveCategories('expense');
-                        }
-                        if (Array.isArray(res.categories.income) && res.categories.income.length > 0) {
-                            this.categories.income = res.categories.income;
-                            this.saveCategories('income');
-                        }
-                        this.updateCategoryOptions();
-                    }
+                    this.applyImportedCategories(res);
                     await this.updateSummary();
                     await this.renderRecords();
                     let msg = `成功导入 ${res.count} 条记录`;
