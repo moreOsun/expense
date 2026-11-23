@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#4CAF50">
     <meta name="description" content="简洁实用的日常记账应用，离线可用">
-    <meta name="app-version" content="1.2.8">
+    <meta name="app-version" content="1.2.9">
     <link rel="manifest" href="./manifest.json">
     <link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png">
@@ -1728,7 +1728,7 @@
                 <div class="filter-actions">
                     <button type="button" id="exportData" class="tool-btn tool-btn-export" title="导出数据">💾 导出</button>
                     <span class="import-wrap">
-                        <button type="button" id="importData" class="tool-btn tool-btn-import" title="导入数据">📂 导入</button>
+                        <button type="button" id="importData" class="tool-btn tool-btn-import" title="导入数据" style="pointer-events: none;">📂 导入</button>
                         <input type="file" id="importFile">
                     </span>
                     <button type="button" id="pasteImport" class="tool-btn tool-btn-paste" title="粘贴备份内容导入">📋 粘贴</button>
@@ -2554,14 +2554,11 @@
                     this.exportData();
                 });
 
-                // 导入数据：覆盖式 file input 直接接收点击唤起系统选择器
+                // 导入数据：覆盖式 file input 直接接收点击唤起系统选择器。
+                // 切勿再用按钮 click 去 .click() input —— 点击会从 input 冒泡到按钮，
+                // 造成一次点击唤起两次选择器，MIUI 等内核下表现为“点了没反应”。
                 document.getElementById('importFile').addEventListener('change', () => {
                     this.handleImportFilePicked();
-                });
-
-                // 兜底：若个别内核未命中覆盖 input，点击按钮仍可主动唤起
-                document.getElementById('importData').addEventListener('click', () => {
-                    document.getElementById('importFile').click();
                 });
 
                 document.getElementById('importOkBtn').addEventListener('click', () => this.confirmImport());
