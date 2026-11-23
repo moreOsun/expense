@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#4CAF50">
     <meta name="description" content="简洁实用的日常记账应用，离线可用">
-    <meta name="app-version" content="1.2.7">
+    <meta name="app-version" content="1.2.8">
     <link rel="manifest" href="./manifest.json">
     <link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png">
@@ -1985,7 +1985,7 @@
                 <button class="modal-close" onclick="app.closePasteImport()">&times;</button>
             </div>
             <p class="ic-text">适用于点“📂 导入”无反应的老浏览器/WebView：用其他应用打开备份 JSON 文件，全选复制后粘贴到下方。导入会覆盖当前全部记录和自定义栏目。</p>
-            <textarea id="pasteImportText" class="pi-textarea" rows="6" placeholder="粘贴备份内容，形如：{ &quot;app&quot;: &quot;daily-expense-tracker&quot;, ... } 也支持旧版纯数组格式"></textarea>
+            <textarea id="pasteImportText" class="pi-textarea" rows="6" placeholder="粘贴备份内容：支持 EXP1: 开头的压缩备份、完整 JSON，以及旧版纯数组格式"></textarea>
             <div class="ic-actions">
                 <button type="button" class="ic-btn ic-btn-cancel" onclick="app.closePasteImport()">取消</button>
                 <button type="button" class="ic-btn ic-btn-ok" id="pasteImportOkBtn">确认导入</button>
@@ -2018,13 +2018,92 @@
             </div>
             <p class="ic-text" id="emManualSummary"></p>
             <textarea id="emManualText" class="em-manual-text" readonly spellcheck="false"></textarea>
-            <p class="em-hint">在文本框内长按选择“全选 → 复制”（电脑按 Ctrl/Cmd+A 再 Ctrl/Cmd+C），粘贴到备忘录或微信保存；恢复时用“📋 粘贴”导入即可。</p>
+            <p class="em-hint">下方为压缩后的备份（以 EXP1: 开头的字母数字），体积约为原文的 1/3，粘贴更不易丢。长按“全选 → 复制”存进备忘录/微信，恢复时用“📋 粘贴”导入，程序会自动解压。</p>
             <button type="button" class="em-opt" id="emManualSelect">👆 帮我选中全部文本</button>
             <button type="button" class="em-opt" onclick="app.closeManualCopy()">关闭</button>
         </div>
     </div>
 
     <script>
+        // ===== 备份压缩编解码（LZW + Base64）=====
+        // JSON 中键名/日期/类别大量重复，压缩后约为原体积 1/3；
+        // 输出纯 ASCII，微信用备忘录粘贴不会丢字符，解决移动端长文本复制不全。
+        const BackupCodec = {
+            PREFIX: 'EXP1:',
+
+            _lzwCompress(bytes) {
+                const dict = new Map();
+                let dictSize = 256;
+                for (let i = 0; i < 256; i++) dict.set(String.fromCharCode(i), i);
+                let w = '';
+                const result = [];
+                for (let i = 0; i < bytes.length; i++) {
+                    const c = String.fromCharCode(bytes[i]);
+                    const wc = w + c;
+                    if (dict.has(wc)) {
+                        w = wc;
+                    } else {
+                        result.push(dict.get(w));
+                        if (dictSize < 65536) dict.set(wc, dictSize++);
+                        w = c;
+                    }
+                }
+                if (w !== '') result.push(dict.get(w));
+                return result;
+            },
+
+            _lzwDecompress(codes) {
+                if (!codes.length) return '';
+                const dict = new Map();
+                let dictSize = 256;
+                for (let i = 0; i < 256; i++) dict.set(i, String.fromCharCode(i));
+                let w = String.fromCharCode(codes[0]);
+                const result = [w];
+                for (let i = 1; i < codes.length; i++) {
+                    const code = codes[i];
+                    let entry;
+                    if (dict.has(code)) entry = dict.get(code);
+                    else if (code === dictSize) entry = w + w[0];
+                    else throw new Error('压缩数据损坏');
+                    result.push(entry);
+                    if (dictSize < 65536) dict.set(dictSize++, w + entry[0]);
+                    w = entry;
+                }
+                return result.join('');
+            },
+
+            _codesToBase64(codes) {
+                let str = '';
+                for (let i = 0; i < codes.length; i++) {
+                    str += String.fromCharCode((codes[i] >> 8) & 0xff, codes[i] & 0xff);
+                }
+                return btoa(str);
+            },
+
+            _base64ToCodes(b64) {
+                const str = atob(b64);
+                const codes = [];
+                for (let i = 0; i + 1 < str.length; i += 2) {
+                    codes.push((str.charCodeAt(i) << 8) | str.charCodeAt(i + 1));
+                }
+                return codes;
+            },
+
+            compress(text) {
+                const bytes = new TextEncoder().encode(text);
+                return this.PREFIX + this._codesToBase64(this._lzwCompress(bytes));
+            },
+
+            decompress(s) {
+                if (typeof s !== 'string' || !s.startsWith(this.PREFIX)) return s; // 旧格式原样返回
+                const codes = this._base64ToCodes(s.slice(this.PREFIX.length));
+                const binary = this._lzwDecompress(codes);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i) & 0xff;
+                return new TextDecoder().decode(bytes);
+            }
+        };
+
         // IndexedDB 数据存储管理
         class StorageManager {
             constructor() {
@@ -2235,13 +2314,17 @@
                         income: parseCats('income_categories')
                     }
                 };
-                // 紧凑输出：去掉缩进，长文本复制/分享成功率更高（导入解析不受影响）
+                // 紧凑 JSON：用于文件下载/分享（体积最小，兼容性最好）
                 const text = JSON.stringify(payload);
+                // 压缩文本：用于剪贴板/手动复制（约 1/3 体积，纯 ASCII，粘贴不截断）
+                const compactText = BackupCodec.compress(text);
                 return {
                     text: text,
+                    compactText: compactText,
                     fileName: `expense_backup_${new Date().toISOString().split('T')[0]}.json`,
                     count: records.length,
-                    size: new Blob([text]).size
+                    size: new Blob([text]).size,
+                    compactSize: new Blob([compactText]).size
                 };
             }
 
@@ -2296,11 +2379,20 @@
                 });
             }
 
-            // 从 JSON 文本导入（兼容旧版纯数组与新版完整备份两种格式）
+            // 从文本导入（兼容：压缩备份 / 旧版纯数组 / 紧凑完整备份）
             async importFromText(text) {
+                let raw = String(text || '').trim();
+                // 压缩格式先解压；解压异常不吞错，给出明确提示
+                if (raw.startsWith(BackupCodec.PREFIX)) {
+                    try {
+                        raw = BackupCodec.decompress(raw);
+                    } catch (e) {
+                        throw new Error('压缩备份已损坏，请重新导出');
+                    }
+                }
                 let data;
                 try {
-                    data = JSON.parse(text);
+                    data = JSON.parse(raw);
                 } catch (error) {
                     throw new Error('文件格式错误');
                 }
@@ -3328,7 +3420,7 @@
             async doExportCopy() {
                 const b = this.pendingBackup;
                 if (!b) return;
-                const ok = await this.copyTextToClipboard(b.text);
+                const ok = await this.copyTextToClipboard(b.compactText);
                 if (ok) {
                     this.showToast('已复制，可存进备忘录/微信，之后用“📋 粘贴”导入');
                     this.closeExportModal();
@@ -3339,13 +3431,13 @@
                 }
             }
 
-            // 复制失败兜底：把完整备份放进只读文本框，引导用户长按全选复制
+            // 复制失败兜底：把压缩备份放进只读文本框，引导用户长按全选复制
             showManualCopy(b) {
                 const ta = document.getElementById('emManualText');
                 if (!ta) return;
-                ta.value = b.text;
+                ta.value = b.compactText;
                 document.getElementById('emManualSummary').textContent =
-                    `共 ${b.count} 条记录 · ${(b.size / 1024).toFixed(1)} KB。下方为完整备份：`;
+                    `共 ${b.count} 条记录 · 压缩后 ${(b.compactSize / 1024).toFixed(1)} KB（原文 ${(b.size / 1024).toFixed(1)} KB）。下方全选复制：`;
                 document.getElementById('manualCopyModal').classList.add('show');
                 // 自动尝试选中，方便直接复制；失败则用户可长按文本框手动全选
                 setTimeout(() => {
