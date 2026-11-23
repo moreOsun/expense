@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#4CAF50">
     <meta name="description" content="简洁实用的日常记账应用，离线可用">
-    <meta name="app-version" content="1.2.6">
+    <meta name="app-version" content="1.2.7">
     <link rel="manifest" href="./manifest.json">
     <link rel="icon" type="image/png" sizes="32x32" href="./icon-32.png">
     <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png">
@@ -2245,26 +2245,10 @@
                 };
             }
 
-            // 发起下载：优先 File System Access API（真正“另存为”，保证找得到文件），
-            // 不支持时回退 blob 下载；返回 'saved' | 'downloaded' | 'cancelled'
-            async downloadText(text, fileName) {
-                // 1) 桌面 Chrome/Edge：让用户选保存位置，最可靠
-                if (typeof window.showSaveFilePicker === 'function') {
-                    try {
-                        const handle = await window.showSaveFilePicker({
-                            suggestedName: fileName,
-                            types: [{ description: 'JSON 备份', accept: { 'application/json': ['.json'] } }]
-                        });
-                        const writable = await handle.createWritable();
-                        await writable.write(text);
-                        await writable.close();
-                        return 'saved';
-                    } catch (e) {
-                        if (e && e.name === 'AbortError') return 'cancelled';
-                        // 其他异常继续走兜底
-                    }
-                }
-                // 2) blob 下载兜底
+            // 发起下载：必须保持“同步”——移动端浏览器的用户手势(transient activation)
+            // 只允许在点击回调的同一同步调用栈内触发下载。一旦中间插入 await，
+            // link.click() 落到微任务里就会被静默拦截（这正是手机端下载失效的根因）。
+            downloadText(text, fileName) {
                 const dataBlob = new Blob([text], { type: 'application/json' });
                 const url = URL.createObjectURL(dataBlob);
                 const link = document.createElement('a');
@@ -2279,7 +2263,6 @@
                     if (link.parentNode) document.body.removeChild(link);
                     URL.revokeObjectURL(url);
                 }, 5000);
-                return 'downloaded';
             }
 
             // 导入用：规范化单条记录（保留原 id/timestamp，缺失才补）
@@ -3315,17 +3298,13 @@
                 this.pendingBackup = null;
             }
 
-            async doExportDownload() {
+            doExportDownload() {
                 const b = this.pendingBackup;
                 if (!b) return;
-                const result = await this.storage.downloadText(b.text, b.fileName);
-                if (result === 'cancelled') return; // 用户取消保存，保留弹窗
+                // 保持同步：点击回调内直接触发下载，不能用 await 打断用户手势
+                this.storage.downloadText(b.text, b.fileName);
                 this.closeExportModal();
-                if (result === 'saved') {
-                    this.showToast('备份已保存到你选择的位置');
-                } else {
-                    this.showToast('已发起下载；若找不到文件，请改用“分享”或“复制”');
-                }
+                this.showToast('已发起下载；若找不到文件，请用“分享”或“👀 查看备份文本”');
             }
 
             async doExportShare() {
